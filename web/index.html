@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="3D GeoViewer - 点群・PDF・3Dモデルを地図上に重ねて表示">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="GeoViewer3D">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="manifest" href="manifest.json">
+  <title>GeoViewer 3D</title>
+
+  <!-- Cesium.js -->
+  <link href="https://cdn.jsdelivr.net/npm/cesium@1.126.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/cesium@1.126.0/Build/Cesium/Cesium.js"></script>
+
+  <!-- PDF.js -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+
+    /* Cesium コンテナ: Flutter の HtmlElementView として埋め込まれる */
+    #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      background: #1a1a2e;
+    }
+
+    /* Cesium UI クロームを非表示 */
+    .cesium-widget-credits { display: none !important; }
+    .cesium-viewer-bottom { display: none !important; }
+    .cesium-viewer-toolbar { display: none !important; }
+
+    /* Flutter overlay は cesium の上 */
+    flt-glass-pane {
+      background: transparent !important;
+    }
+  </style>
+
+  <script src="cesium_bridge.js"></script>
+</head>
+<body>
+  <script>
+    // PDF.js worker
+    if (typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    }
+
+    // Flutter の HtmlElementView から参照される Cesium コンテナを登録する
+    window._cesiumContainerFactory = function(id) {
+      const div = document.createElement('div');
+      div.id = 'cesiumContainer';
+      div.style.width = '100%';
+      div.style.height = '100%';
+      return div;
+    };
+  </script>
+
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

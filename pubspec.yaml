@@ -1,0 +1,27 @@
+name: geoviewer3d
+description: "3D GeoViewer - Point cloud, PDF, and 3D model overlay on map"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.2
+  file_picker: ^8.1.7
+  path: ^1.9.0
+  shared_preferences: ^2.3.3
+  web: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/

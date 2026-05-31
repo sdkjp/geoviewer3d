@@ -1,0 +1,101 @@
+name: Convert & Compress Point Cloud Files
+
+on:
+  push:
+    paths:
+      - 'data/pointcloud/raw/**'
+  workflow_dispatch:
+    inputs:
+      input_path:
+        description: '変換するファイルパス (data/pointcloud/raw/ 配下)'
+        required: false
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            liblas-dev \
+            liblas-c-dev \
+            libboost-all-dev \
+            wget \
+            unzip
+
+      - name: Install LAStools (laszip, las2las)
+        run: |
+          # LASzip for LAZ decompression
+          wget -q https://github.com/LASzip/LASzip/releases/download/3.4.3/laszip-src-3.4.3.tar.gz
+          tar xzf laszip-src-3.4.3.tar.gz
+          cd laszip-src-3.4.3
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: Detect and convert files
+        run: |
+          mkdir -p data/pointcloud/converted
+
+          find data/pointcloud/raw -type f \( \
+            -name "*.las" -o -name "*.LAS" \
+            -o -name "*.laz" -o -name "*.LAZ" \
+            -o -name "*.xyz" -o -name "*.txt" \
+            -o -name "*.csv" \
+          \) | while read file; do
+            ext="${file##*.}"
+            base=$(basename "$file" ".$ext")
+            outdir="data/pointcloud/converted/$base"
+            mkdir -p "$outdir"
+
+            echo "Processing: $file"
+
+            case "${ext,,}" in
+              laz)
+                echo "  LAZ → LAS"
+                laszip -i "$file" -o "$outdir/${base}.las" || true
+                ;;
+              las)
+                echo "  LAS → LAZ (compress)"
+                laszip -i "$file" -o "$outdir/${base}.laz" || true
+                cp "$file" "$outdir/${base}.las"
+                ;;
+              xyz|txt|csv)
+                echo "  XYZ/CSV → LAS (via txt2las)"
+                # txt2las が使える場合
+                if command -v txt2las &> /dev/null; then
+                  txt2las -i "$file" -o "$outdir/${base}.las" \
+                    -parse xyz -set_version 1.2 || true
+                else
+                  echo "  txt2las not available, copying raw"
+                  cp "$file" "$outdir/"
+                fi
+                ;;
+            esac
+
+            # ファイルサイズ情報を JSON に記録
+            filesize=$(stat -c%s "$file")
+            cat > "$outdir/info.json" << EOF
+          {
+            "originalFile": "$(basename $file)",
+            "format": "${ext,,}",
+            "fileSizeBytes": $filesize,
+            "convertedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          done
+
+      - name: Commit converted files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/pointcloud/converted/
+          git diff --staged --quiet || git commit -m "chore: convert point cloud files [skip ci]"
+          git push
