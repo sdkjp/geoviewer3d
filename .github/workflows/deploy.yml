@@ -28,11 +28,9 @@ jobs:
           cache: true
 
       - name: Get dependencies
-        working-directory: geoviewer3d
         run: flutter pub get
 
       - name: Build Flutter Web
-        working-directory: geoviewer3d
         run: |
           flutter build web \
             --release \
@@ -45,7 +43,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: geoviewer3d/build/web
+          path: build/web
 
   deploy:
     environment:
