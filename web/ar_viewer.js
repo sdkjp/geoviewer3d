@@ -28,47 +28,78 @@
     if (!cloud || !cloud.points || cloud.points.length === 0) return null;
 
     const all = cloud.points;
-    const cen = cloud.center;           // { lon, lat }
-    const MAX = 100000;                 // model-viewer は 10万点前後が快適
+    const cen = cloud.center;
+    // iOS AR Quick Look は POINTS(mode=0) 非対応 → 十字クワッドに変換
+    // 1点 = 直交する2枚のクワッド(XY面 + ZY面) = 8頂点 + 4三角形(12インデックス)
+    // 表示点数は 40K に間引き (ファイルサイズ ~7MB)
+    const MAX  = 40000;
     const skip = Math.max(1, Math.ceil(all.length / MAX));
     const pts  = [];
     for (let i = 0; i < all.length; i += skip) pts.push(all[i]);
     const n = pts.length;
 
-    const cosLat = Math.cos(cen.lat * Math.PI / 180);
+    const cosLat  = Math.cos(cen.lat * Math.PI / 180);
     const mPerLon = 111320 * cosLat;
     const mPerLat = 110540;
+    const HALF    = 0.15;  // クワッド半辺 0.15m → 30cm × 30cm
 
-    // バイナリ配列
-    const pos = new Float32Array(n * 3);  // VEC3  = 12 B/点
-    const col = new Uint8Array(n * 4);    // VEC4  =  4 B/点 (RGB+A)
+    // 1点あたり: 8頂点・12インデックス
+    const nVerts = n * 8;
+    const nIdx   = n * 12;
 
-    let minX = 1e9, minY = 1e9, minZ = 1e9;
-    let maxX = -1e9, maxY = -1e9, maxZ = -1e9;
+    const pos = new Float32Array(nVerts * 3);  // POSITION VEC3
+    const col = new Uint8Array(nVerts * 4);    // COLOR_0  VEC4 (RGBA)
+    const idx = new Uint32Array(nIdx);         // INDEX    SCALAR UINT
+
+    let minX=1e9, minY=1e9, minZ=1e9, maxX=-1e9, maxY=-1e9, maxZ=-1e9;
 
     for (let i = 0; i < n; i++) {
-      const p = pts[i];
-      // WGS84 → ENU ローカル (m)
-      // model-viewer / GLTF 座標: +X=右(東), +Y=上, -Z=手前(北)
-      const x =  (p.x - cen.lon) * mPerLon;
-      const y =  (p.z || 0);
-      const z = -(p.y - cen.lat) * mPerLat;
-      pos[i * 3]     = x;
-      pos[i * 3 + 1] = y;
-      pos[i * 3 + 2] = z;
-      col[i * 4]     = p.r !== undefined ? p.r : 180;
-      col[i * 4 + 1] = p.g !== undefined ? p.g : 180;
-      col[i * 4 + 2] = p.b !== undefined ? p.b : 180;
-      col[i * 4 + 3] = 255;
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-      minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+      const p  = pts[i];
+      const cx =  (p.x - cen.lon) * mPerLon;
+      const cy =  (p.z || 0);
+      const cz = -(p.y - cen.lat) * mPerLat;
+
+      const r = p.r !== undefined ? p.r : 180;
+      const g = p.g !== undefined ? p.g : 180;
+      const b = p.b !== undefined ? p.b : 180;
+
+      const vi = i * 8;   // vertex base index
+      const pi = vi * 3;  // pos array offset
+      const ci = vi * 4;  // col array offset
+      const ii = i * 12;  // idx array offset
+
+      // Quad A: XY 面 (±Z を向く垂直クワッド)
+      pos[pi+ 0]=cx-HALF; pos[pi+ 1]=cy-HALF; pos[pi+ 2]=cz;
+      pos[pi+ 3]=cx+HALF; pos[pi+ 4]=cy-HALF; pos[pi+ 5]=cz;
+      pos[pi+ 6]=cx+HALF; pos[pi+ 7]=cy+HALF; pos[pi+ 8]=cz;
+      pos[pi+ 9]=cx-HALF; pos[pi+10]=cy+HALF; pos[pi+11]=cz;
+      // Quad B: ZY 面 (±X を向く垂直クワッド)
+      pos[pi+12]=cx; pos[pi+13]=cy-HALF; pos[pi+14]=cz-HALF;
+      pos[pi+15]=cx; pos[pi+16]=cy-HALF; pos[pi+17]=cz+HALF;
+      pos[pi+18]=cx; pos[pi+19]=cy+HALF; pos[pi+20]=cz+HALF;
+      pos[pi+21]=cx; pos[pi+22]=cy+HALF; pos[pi+23]=cz-HALF;
+
+      for (let v = 0; v < 8; v++) {
+        col[ci+v*4+0]=r; col[ci+v*4+1]=g; col[ci+v*4+2]=b; col[ci+v*4+3]=255;
+      }
+
+      // Quad A の三角形 (0-1-2, 0-2-3)
+      idx[ii+ 0]=vi+0; idx[ii+ 1]=vi+1; idx[ii+ 2]=vi+2;
+      idx[ii+ 3]=vi+0; idx[ii+ 4]=vi+2; idx[ii+ 5]=vi+3;
+      // Quad B の三角形 (4-5-6, 4-6-7)
+      idx[ii+ 6]=vi+4; idx[ii+ 7]=vi+5; idx[ii+ 8]=vi+6;
+      idx[ii+ 9]=vi+4; idx[ii+10]=vi+6; idx[ii+11]=vi+7;
+
+      minX=Math.min(minX,cx-HALF); maxX=Math.max(maxX,cx+HALF);
+      minY=Math.min(minY,cy-HALF); maxY=Math.max(maxY,cy+HALF);
+      minZ=Math.min(minZ,cz-HALF); maxZ=Math.max(maxZ,cz+HALF);
     }
 
-    // バッファレイアウト: pos(n*12) → col(n*4)
-    const posByteLen = n * 12;
-    const colByteLen = n * 4;
-    const binByteLen = posByteLen + colByteLen;
+    // バッファレイアウト: pos → col → idx (4byte アライン)
+    const posByteLen = nVerts * 12;
+    const colByteLen = nVerts * 4;
+    const idxByteLen = nIdx   * 4;
+    const binByteLen = posByteLen + colByteLen + idxByteLen;
 
     const jsonStr = JSON.stringify({
       asset: { version: '2.0', generator: 'GeoViewer3D' },
@@ -78,33 +109,44 @@
       meshes: [{
         primitives: [{
           attributes: { POSITION: 0, COLOR_0: 1 },
-          mode: 0,   // POINTS
+          indices: 2,
+          mode: 4,   // TRIANGLES (iOS AR Quick Look 対応)
+          material: 0,
         }],
+      }],
+      materials: [{
+        pbrMetallicRoughness: { metallicFactor: 0, roughnessFactor: 1 },
+        doubleSided: true,  // 裏面も描画
       }],
       accessors: [
         {
           bufferView: 0, componentType: 5126 /* FLOAT */,
-          count: n, type: 'VEC3',
+          count: nVerts, type: 'VEC3',
           min: [minX, minY, minZ], max: [maxX, maxY, maxZ],
         },
         {
           bufferView: 1, componentType: 5121 /* UNSIGNED_BYTE */,
-          count: n, type: 'VEC4', normalized: true,
+          count: nVerts, type: 'VEC4', normalized: true,
+        },
+        {
+          bufferView: 2, componentType: 5125 /* UNSIGNED_INT */,
+          count: nIdx, type: 'SCALAR',
         },
       ],
       bufferViews: [
-        { buffer: 0, byteOffset: 0,          byteLength: posByteLen },
-        { buffer: 0, byteOffset: posByteLen, byteLength: colByteLen },
+        { buffer: 0, byteOffset: 0,                        byteLength: posByteLen },
+        { buffer: 0, byteOffset: posByteLen,               byteLength: colByteLen },
+        { buffer: 0, byteOffset: posByteLen + colByteLen,  byteLength: idxByteLen },
       ],
       buffers: [{ byteLength: binByteLen }],
     });
 
     // JSON チャンクは 4byte アライン (space=0x20 でパディング)
-    const jsonBytes  = new TextEncoder().encode(jsonStr);
-    const jsonPadLen = (4 - (jsonBytes.length % 4)) % 4;
+    const jsonBytes    = new TextEncoder().encode(jsonStr);
+    const jsonPadLen   = (4 - (jsonBytes.length % 4)) % 4;
     const jsonChunkLen = jsonBytes.length + jsonPadLen;
 
-    // GLB 合計サイズ = header(12) + json_chunk_header(8) + json_chunk + bin_chunk_header(8) + bin
+    // GLB 合計サイズ
     const totalLen = 12 + 8 + jsonChunkLen + 8 + binByteLen;
     const buf = new ArrayBuffer(totalLen);
     const dv  = new DataView(buf);
@@ -114,7 +156,7 @@
     // --- GLB ヘッダー ---
     dv.setUint32(off, 0x46546C67, true); off += 4;  // magic "glTF"
     dv.setUint32(off, 2,          true); off += 4;  // version 2
-    dv.setUint32(off, totalLen,   true); off += 4;  // total length
+    dv.setUint32(off, totalLen,   true); off += 4;
 
     // --- JSON チャンク ---
     dv.setUint32(off, jsonChunkLen, true); off += 4;
@@ -125,8 +167,9 @@
     // --- BIN チャンク ---
     dv.setUint32(off, binByteLen, true); off += 4;
     dv.setUint32(off, 0x004E4942, true); off += 4;  // "BIN\0"
-    u8.set(new Uint8Array(pos.buffer),  off); off += posByteLen;
-    u8.set(col,                         off);
+    u8.set(new Uint8Array(pos.buffer), off); off += posByteLen;
+    u8.set(col,                        off); off += colByteLen;
+    u8.set(new Uint8Array(idx.buffer), off);
 
     return buf;
   }
