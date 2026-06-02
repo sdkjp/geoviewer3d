@@ -1,0 +1,17 @@
+{
+  "filename": "sample_kyobashi.las",
+  "description": "大阪市 京橋駅周辺 三次元点群 (令和3-4年度取得)",
+  "source": "G空間情報センター / 大阪市",
+  "license": "CC BY 4.0",
+  "crs": {
+    "type": "JGD2011",
+    "zone": 6,
+    "epsg": 6674,
+    "origin_lat": 36.0,
+    "origin_lon": 136.0,
+    "axis_convention": "easting_northing",
+    "note": "LAS_X=easting(Y軸), LAS_Y=northing(X軸)"
+  },
+  "center": { "lon": 135.534, "lat": 34.693 },
+  "coverage_m": 320
+}
