@@ -75,7 +75,7 @@ class MapLayer {
     this.glbPitch = 0,
     this.glbRoll = 0,
     this.glbScale = 1.0,
-  })  : color = color ?? const Color(0xFF4FC3F7),
+  })  : color = color ?? const Color(0xFF1B3A6B),
         gcpPairs = gcpPairs ?? [],
         pdfCorners = pdfCorners ?? [];
 

@@ -22,11 +22,12 @@ class GeoViewer3DApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        brightness: Brightness.dark,
+        brightness: Brightness.light,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF4FC3F7),
-          brightness: Brightness.dark,
-          surface: const Color(0xFF1A1A2E),
+          seedColor: const Color(0xFF1B3A6B),
+          brightness: Brightness.light,
+          primary: const Color(0xFF1B3A6B),
+          surface: Colors.white,
         ),
         scaffoldBackgroundColor: Colors.transparent,
       ),

@@ -4,6 +4,11 @@ import 'package:flutter/services.dart';
 import '../models/viewpoint.dart';
 import '../services/file_service.dart';
 
+const _kNavy    = Color(0xFF1B3A6B);
+const _kNavyMid = Color(0xFF2A5298);
+const _kBorder  = Color(0xFFDDE2EE);
+const _kTextSub = Color(0xFF6B7A99);
+
 class ViewpointExportDialog extends StatefulWidget {
   final String viewpointJson;
   const ViewpointExportDialog({super.key, required this.viewpointJson});
@@ -25,8 +30,11 @@ class _ViewpointExportDialogState extends State<ViewpointExportDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: const Color(0xFF1A1A2E),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: _kBorder),
+      ),
       child: Container(
         width: 400,
         padding: const EdgeInsets.all(20),
@@ -36,17 +44,16 @@ class _ViewpointExportDialogState extends State<ViewpointExportDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.share_location, color: Color(0xFF4FC3F7)),
+                const Icon(Icons.share_location, color: _kNavy),
                 const SizedBox(width: 8),
                 const Text('視点を共有',
                     style: TextStyle(
-                        color: Colors.white,
+                        color: _kNavy,
                         fontSize: 16,
                         fontWeight: FontWeight.bold)),
                 const Spacer(),
                 IconButton(
-                  icon:
-                      const Icon(Icons.close, color: Colors.white54, size: 20),
+                  icon: const Icon(Icons.close, color: _kTextSub, size: 20),
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
@@ -55,14 +62,14 @@ class _ViewpointExportDialogState extends State<ViewpointExportDialog> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
+                color: const Color(0xFFF0F4F8),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.white12),
+                border: Border.all(color: _kBorder),
               ),
               child: SelectableText(
                 widget.viewpointJson,
                 style: const TextStyle(
-                    color: Color(0xFF4FC3F7),
+                    color: _kNavy,
                     fontSize: 11,
                     fontFamily: 'monospace'),
               ),
@@ -74,15 +81,12 @@ class _ViewpointExportDialogState extends State<ViewpointExportDialog> {
                   child: OutlinedButton.icon(
                     icon: Icon(
                         _copied ? Icons.check : Icons.copy, size: 16),
-                    label:
-                        Text(_copied ? 'コピー済み' : 'クリップボードにコピー'),
+                    label: Text(_copied ? 'コピー済み' : 'クリップボードにコピー'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor:
-                          _copied ? Colors.green : const Color(0xFF4FC3F7),
+                          _copied ? Colors.green : _kNavy,
                       side: BorderSide(
-                          color: _copied
-                              ? Colors.green
-                              : const Color(0xFF4FC3F7)),
+                          color: _copied ? Colors.green : _kNavyMid),
                     ),
                     onPressed: () async {
                       await Clipboard.setData(
@@ -98,8 +102,8 @@ class _ViewpointExportDialogState extends State<ViewpointExportDialog> {
                   icon: const Icon(Icons.download, size: 16),
                   label: const Text('JSON 保存'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
-                    side: const BorderSide(color: Colors.white24),
+                    foregroundColor: _kTextSub,
+                    side: const BorderSide(color: _kBorder),
                   ),
                   onPressed: () {
                     FileService.downloadJson(
@@ -136,7 +140,6 @@ class _ViewpointImportDialogState extends State<ViewpointImportDialog> {
     try {
       final text = _ctrl.text.trim();
       final decoded = jsonDecode(text) as Map<String, dynamic>;
-      // lon/lat の存在確認
       if (!decoded.containsKey('lon') || !decoded.containsKey('lat')) {
         setState(() => _error = 'lon / lat フィールドが見つかりません');
         return;
@@ -150,8 +153,11 @@ class _ViewpointImportDialogState extends State<ViewpointImportDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: const Color(0xFF1A1A2E),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: _kBorder),
+      ),
       child: Container(
         width: 400,
         padding: const EdgeInsets.all(20),
@@ -161,17 +167,16 @@ class _ViewpointImportDialogState extends State<ViewpointImportDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.my_location, color: Color(0xFF4FC3F7)),
+                const Icon(Icons.my_location, color: _kNavy),
                 const SizedBox(width: 8),
                 const Text('視点を読み込む',
                     style: TextStyle(
-                        color: Colors.white,
+                        color: _kNavy,
                         fontSize: 16,
                         fontWeight: FontWeight.bold)),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.close,
-                      color: Colors.white54, size: 20),
+                  icon: const Icon(Icons.close, color: _kTextSub, size: 20),
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
@@ -180,22 +185,26 @@ class _ViewpointImportDialogState extends State<ViewpointImportDialog> {
             TextField(
               controller: _ctrl,
               style: const TextStyle(
-                  color: Color(0xFF4FC3F7),
+                  color: _kNavy,
                   fontSize: 11,
                   fontFamily: 'monospace'),
               maxLines: 8,
               decoration: InputDecoration(
                 hintText: '{"lon": 135.5, "lat": 34.7, ...}',
-                hintStyle: const TextStyle(color: Colors.white24, fontSize: 11),
+                hintStyle: const TextStyle(color: _kTextSub, fontSize: 11),
                 filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
+                fillColor: const Color(0xFFF0F4F8),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: Colors.white12),
+                  borderSide: const BorderSide(color: _kBorder),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: Colors.white12),
+                  borderSide: const BorderSide(color: _kBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: _kNavy, width: 2),
                 ),
                 errorText: _error,
               ),
@@ -208,8 +217,8 @@ class _ViewpointImportDialogState extends State<ViewpointImportDialog> {
                   icon: const Icon(Icons.upload_file, size: 16),
                   label: const Text('ファイルから'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
-                    side: const BorderSide(color: Colors.white24),
+                    foregroundColor: _kTextSub,
+                    side: const BorderSide(color: _kBorder),
                   ),
                   onPressed: () async {
                     final f = await FileService.pickJson();
@@ -223,13 +232,13 @@ class _ViewpointImportDialogState extends State<ViewpointImportDialog> {
                 TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text('キャンセル',
-                      style: TextStyle(color: Colors.white54)),
+                      style: TextStyle(color: _kTextSub)),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4FC3F7),
-                    foregroundColor: Colors.black87,
+                    backgroundColor: _kNavy,
+                    foregroundColor: Colors.white,
                   ),
                   onPressed: _ctrl.text.trim().isEmpty ? null : _apply,
                   child: const Text('移動'),

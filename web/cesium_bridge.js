@@ -68,20 +68,30 @@ window.CesiumBridge = (function () {
       duration: 0,
     });
 
-    // GCP クリックハンドラ
+    // クリックハンドラ（GCP + 歩行モード共用）
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction(function (movement) {
-      if (!gcpPickingMode || !gcpPickCallback) return;
       const cartesian = viewer.camera.pickEllipsoid(movement.position);
-      if (cartesian) {
-        const carto = Cesium.Cartographic.fromCartesian(cartesian);
-        const lon = Cesium.Math.toDegrees(carto.longitude);
-        const lat = Cesium.Math.toDegrees(carto.latitude);
-        const h = carto.height;
+      if (!cartesian) return;
+      const carto = Cesium.Cartographic.fromCartesian(cartesian);
+      const lon = Cesium.Math.toDegrees(carto.longitude);
+      const lat = Cesium.Math.toDegrees(carto.latitude);
+      const h   = carto.height;
+
+      // 歩行モード: クリック地点に移動
+      if (_walkMode) {
+        enableWalkingMode(lon, lat);
+        return;
+      }
+
+      // GCP ピッキング
+      if (gcpPickingMode && gcpPickCallback) {
         gcpPickCallback(JSON.stringify({ lon, lat, height: h }));
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
+    // viewer への外部参照を保存
+    window._cesiumViewerRef = viewer;
     return true;
   }
 
@@ -118,7 +128,10 @@ window.CesiumBridge = (function () {
   // ──────────────────────────────────────────────
   let _walkMode = false;
   const WALK_EYE_HEIGHT = 1.7;   // 目線の高さ (m)
-  const WALK_SPEED_MPS  = 2.0;   // 歩行速度 (m/tick)
+  // ジョイスティックは 16ms 周期 (≈62.5 tick/s) で呼ばれる
+  // WALK_SPEED_MPS * 62.5 ≈ 実効速度 [m/s]
+  // 0.04 → フルスロットル時 約 2.5 m/s (ゆっくり歩き相当)
+  const WALK_SPEED_MPS  = 0.04;  // m/tick
 
   // ジョイスティック移動 (dx, dy: -1.0 ~ 1.0)
   function moveCamera(dx, dy, dz) {
@@ -178,6 +191,8 @@ window.CesiumBridge = (function () {
     if (!viewer) return;
     _walkMode = true;
     const currentHeading = viewer.camera.heading;
+    // 地面近くでの z-fighting を防ぐため depthTest を無効化
+    viewer.scene.globe.depthTestAgainstTerrain = false;
     viewer.camera.setView({
       destination: Cesium.Cartesian3.fromDegrees(lon, lat, WALK_EYE_HEIGHT),
       orientation: {
@@ -193,6 +208,10 @@ window.CesiumBridge = (function () {
 
   function disableWalkingMode() {
     _walkMode = false;
+    // 通常モードに戻したら depthTest を再有効化
+    if (viewer) {
+      viewer.scene.globe.depthTestAgainstTerrain = true;
+    }
     if (viewer && viewer.scene.canvas) {
       viewer.scene.canvas.style.cursor = '';
     }
@@ -279,6 +298,10 @@ window.CesiumBridge = (function () {
   // TypedArray 直接渡し (高速 - JS から直接呼ぶ場合)
   function addPointCloudDirect(id, pointsArray, options) {
     if (!viewer) return;
+    // AR 用に生データを保存 (center があれば)
+    if (options && options.center && window._arStoreCloud) {
+      window._arStoreCloud(id, pointsArray, options.center);
+    }
     return _addPointCloudFromArray(id, pointsArray, options || {});
   }
 
@@ -320,31 +343,120 @@ window.CesiumBridge = (function () {
   }
 
   // ──────────────────────────────────────────────
-  // PDF レイヤー（地面に貼る）
+  // PDF レイヤー (PowerPoint 風 ─ 移動・拡縮・回転)
   // ──────────────────────────────────────────────
+
+  // PDF の変換状態を保持
+  const _pdfStates = {}; // id → { centerLon, centerLat, widthM, heightM, rotDeg, alpha, imageDataUrl }
+
+  /** 地理座標での4隅を計算 (中心 + サイズ + 回転) */
+  function _computePdfCorners(centerLon, centerLat, widthM, heightM, rotDeg) {
+    const rot = rotDeg * Math.PI / 180;
+    const cosR = Math.cos(rot), sinR = Math.sin(rot);
+    const cosLat = Math.cos(centerLat * Math.PI / 180);
+    const latPerM = 1 / 110540;
+    const lonPerM = 1 / (111320 * cosLat);
+    const hw = widthM / 2, hh = heightM / 2;
+    // 左上,右上,右下,左下 の順 (逆時計回り)
+    return [
+      [-hw,  hh], [ hw,  hh], [ hw, -hh], [-hw, -hh],
+    ].map(([dx, dy]) => {
+      const rdx = dx * cosR - dy * sinR;
+      const rdy = dx * sinR + dy * cosR;
+      return Cesium.Cartesian3.fromDegrees(
+        centerLon + rdx * lonPerM,
+        centerLat + rdy * latPerM,
+        1 // 地面から 1m 上（z-fighting 防止）
+      );
+    });
+  }
+
+  /** PDF を地図に貼り付け (初回 or 更新) */
+  function placePdfLayer(id, imageDataUrl, centerLon, centerLat, widthM, heightM, rotDeg, alpha) {
+    if (!viewer) return;
+    alpha = alpha !== undefined ? alpha : 0.7;
+
+    _pdfStates[id] = { centerLon, centerLat, widthM, heightM, rotDeg, alpha, imageDataUrl };
+    _refreshPdfEntity(id);
+    return true;
+  }
+
+  function _refreshPdfEntity(id) {
+    const s = _pdfStates[id];
+    if (!s) return;
+    // 既存エンティティ削除
+    if (layers[id]?.entity) viewer.entities.remove(layers[id].entity);
+
+    const corners = _computePdfCorners(s.centerLon, s.centerLat, s.widthM, s.heightM, s.rotDeg);
+    const entity = viewer.entities.add({
+      polygon: {
+        hierarchy: new Cesium.PolygonHierarchy(corners),
+        material: new Cesium.ImageMaterialProperty({
+          image: s.imageDataUrl,
+          transparent: true,
+          color: new Cesium.Color(1, 1, 1, s.alpha),
+        }),
+        perPositionHeight: true,
+        outline: false,
+        arcType: Cesium.ArcType.NONE,
+      },
+    });
+    layers[id] = { type: 'pdf', entity };
+  }
+
+  /** PDF の変換を更新 (ドラッグ中にリアルタイム呼ぶ) */
+  function updatePdfTransform(id, centerLon, centerLat, widthM, heightM, rotDeg, alpha) {
+    if (!_pdfStates[id]) return;
+    Object.assign(_pdfStates[id], { centerLon, centerLat, widthM, heightM, rotDeg, alpha });
+    _refreshPdfEntity(id);
+  }
+
+  /** PDF の4隅 + 中心のスクリーン座標を返す (Flutter ハンドル配置用) */
+  function getPdfScreenHandles(id) {
+    const s = _pdfStates[id];
+    if (!s || !viewer) return null;
+    const corners = _computePdfCorners(s.centerLon, s.centerLat, s.widthM, s.heightM, s.rotDeg);
+    const pts = corners.map(c => {
+      const sc = viewer.scene.cartesianToCanvasCoordinates(c);
+      return sc ? { x: sc.x, y: sc.y } : null;
+    });
+    // 中心点も追加
+    const csc = viewer.scene.cartesianToCanvasCoordinates(
+      Cesium.Cartesian3.fromDegrees(s.centerLon, s.centerLat, 1)
+    );
+    pts.push(csc ? { x: csc.x, y: csc.y } : null);
+    return JSON.stringify(pts);
+  }
+
+  /** カメラ中心にデフォルトサイズで PDF を仮置き */
+  function initPdfPlacement(id, imageDataUrl, aspectRatio) {
+    if (!viewer) return;
+    const pos = viewer.camera.positionCartographic;
+    const h = pos.height;
+    // 高度に応じて初期サイズ (画面の ~30%が埋まるくらい)
+    const widthM  = h * 0.5;
+    const heightM = widthM / (aspectRatio || 1.414); // A4縦のデフォルト
+    const lon = Cesium.Math.toDegrees(pos.longitude);
+    const lat = Cesium.Math.toDegrees(pos.latitude);
+    placePdfLayer(id, imageDataUrl, lon, lat, widthM, heightM, 0, 0.7);
+    return JSON.stringify({ centerLon: lon, centerLat: lat, widthM, heightM, rotDeg: 0, alpha: 0.7 });
+  }
+
+  /** 旧 addPdfLayer (GCP 互換、非推奨) */
   function addPdfLayer(id, canvasDataUrl, cornersJson) {
     if (!viewer) return;
     removeLayer(id);
-
     const corners = JSON.parse(cornersJson);
-    // corners: [{lon,lat,h}, {lon,lat,h}, {lon,lat,h}, {lon,lat,h}] 左上,右上,右下,左下
-
-    const material = new Cesium.ImageMaterialProperty({
-      image: canvasDataUrl,
-      transparent: true,
-    });
-
     const entity = viewer.entities.add({
       polygon: {
         hierarchy: new Cesium.PolygonHierarchy(
           corners.map(c => Cesium.Cartesian3.fromDegrees(c.lon, c.lat, c.h || 0))
         ),
-        material,
+        material: new Cesium.ImageMaterialProperty({ image: canvasDataUrl, transparent: true }),
         perPositionHeight: true,
         outline: false,
       },
     });
-
     layers[id] = { type: 'pdf', entity };
     return true;
   }
@@ -543,6 +655,61 @@ window.CesiumBridge = (function () {
   }
 
   // ──────────────────────────────────────────────
+  // カメラ操作の ON/OFF (PDF 編集モード用)
+  // ──────────────────────────────────────────────
+  function disableCameraControls() {
+    if (!viewer) return;
+    const ctrl = viewer.scene.screenSpaceCameraController;
+    ctrl.enableRotate    = false;
+    ctrl.enableTranslate = false;
+    ctrl.enableZoom      = false;
+    ctrl.enableTilt      = false;
+    ctrl.enableLook      = false;
+    // CSS でも念押し: Cesium canvas のポインターイベントを無効化
+    if (viewer.scene.canvas) {
+      viewer.scene.canvas.style.pointerEvents = 'none';
+    }
+  }
+
+  function enableCameraControls() {
+    if (!viewer) return;
+    const ctrl = viewer.scene.screenSpaceCameraController;
+    ctrl.enableRotate    = true;
+    ctrl.enableTranslate = true;
+    ctrl.enableZoom      = true;
+    ctrl.enableTilt      = true;
+    ctrl.enableLook      = true;
+    if (viewer.scene.canvas) {
+      viewer.scene.canvas.style.pointerEvents = '';
+    }
+  }
+
+  /** スクリーン座標 → 地理座標 (Cesium ray picking) */
+  function screenToGeo(screenX, screenY) {
+    if (!viewer) return null;
+    const pos2d = new Cesium.Cartesian2(screenX, screenY);
+
+    // まず地形 (Globe) への ray intersection
+    const ray = viewer.camera.getPickRay(pos2d);
+    let cartesian = null;
+    if (ray) {
+      cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+    }
+    // 地形に当たらない場合は楕円体
+    if (!cartesian) {
+      cartesian = viewer.camera.pickEllipsoid(pos2d);
+    }
+    if (!cartesian) return null;
+
+    const carto = Cesium.Cartographic.fromCartesian(cartesian);
+    return JSON.stringify({
+      lon: Cesium.Math.toDegrees(carto.longitude),
+      lat: Cesium.Math.toDegrees(carto.latitude),
+      h:   carto.height,
+    });
+  }
+
+  // ──────────────────────────────────────────────
   // ファイルダウンロード
   // ──────────────────────────────────────────────
   function downloadBlob(bytes, filename, mime) {
@@ -570,6 +737,10 @@ window.CesiumBridge = (function () {
     addPointCloudLayer,
     addPointCloudDirect,
     addPdfLayer,
+    placePdfLayer,
+    updatePdfTransform,
+    getPdfScreenHandles,
+    initPdfPlacement,
     addGlbLayer,
     removeLayer,
     setLayerVisibility,
@@ -587,6 +758,12 @@ window.CesiumBridge = (function () {
     getAltitude,
     isInitialized,
     downloadBlob,
+    enableWalkingMode,
+    disableWalkingMode,
+    isWalkingMode,
+    disableCameraControls,
+    enableCameraControls,
+    screenToGeo,
   };
 })();
 
@@ -613,9 +790,36 @@ window._createCesiumDiv = function () {
 };
 
 // ─────────────────────────────────────────────
+// Flutter レイヤーパネル経由のロード
+// Flutter Dart から _loadPointCloudFromFlutter(url, layerId, jgdZone, jgdSwapped, callback) で呼ぶ
+// ─────────────────────────────────────────────
+window._loadPointCloudFromFlutter = function(url, layerId, jgdZone, jgdSwapped, callback) {
+  const crsHint = jgdZone > 0 ? { zone: jgdZone, swapped: jgdSwapped } : null;
+  fetch(url)
+    .then(r => r.arrayBuffer())
+    .then(buf => {
+      window._runLasWorker(buf, url.split('/').pop(), (json) => {
+        const r = JSON.parse(json);
+        if (r.type === 'error') {
+          callback(JSON.stringify({ error: r.message }));
+          return;
+        }
+        CesiumBridge.addPointCloudDirect(layerId, r.points, { pointSize: 3, center: r.center });
+        callback(JSON.stringify({
+          pts: r.loadedPoints,
+          center: r.center,
+          zone: r.jgdZone,
+          info: r.coordinateInfo,
+        }));
+      }, crsHint);
+    })
+    .catch(e => callback(JSON.stringify({ error: e.message })));
+};
+
+// ─────────────────────────────────────────────
 // Web Worker: LAS パーサ起動 (Flutter から呼ばれる)
 // ─────────────────────────────────────────────
-// 高速パス: LAS を読んで直接 Cesium に表示（Dart/Flutter を介さない）
+// 旧: 直接 Cesium に表示（JS コンソール用）
 window._loadAndShowPointCloud = function(layerId, url, crsHint, onDone) {
   fetch(url)
     .then(r => r.arrayBuffer())
@@ -650,6 +854,18 @@ window._runLasWorker = function (buffer, filename, callback, crsHint) {
   };
 
   worker.postMessage({ type: 'parse', id, buffer, filename, crsHint }, [buffer]);
+};
+
+// ─────────────────────────────────────────────
+// PDF アスペクト比取得
+// ─────────────────────────────────────────────
+window._getPdfAspectRatio = async function (dataUrl) {
+  if (typeof pdfjsLib === 'undefined') return 1.0;
+  const loadingTask = pdfjsLib.getDocument({ url: dataUrl });
+  const pdf = await loadingTask.promise;
+  const page = await pdf.getPage(1);
+  const vp = page.getViewport({ scale: 1.0 });
+  return vp.width / vp.height;
 };
 
 // ─────────────────────────────────────────────

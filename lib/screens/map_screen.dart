@@ -15,6 +15,7 @@ import '../widgets/joystick_widget.dart';
 import '../widgets/layer_panel.dart';
 import '../widgets/gcp_dialog.dart';
 import '../widgets/viewpoint_dialog.dart';
+import '../widgets/pdf_editor_overlay.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -28,6 +29,10 @@ class _MapScreenState extends State<MapScreen> {
   bool _cesiumViewRegistered = false;
   bool _showControls = true;
   bool _annotationMode = false;
+  bool _walkingMode = false;
+  // PDF エディタ
+  String? _editingPdfId;
+  Map<String, dynamic>? _editingPdfState;
 
   @override
   void initState() {
@@ -73,6 +78,26 @@ class _MapScreenState extends State<MapScreen> {
     super.dispose();
   }
 
+  // ─── 歩行モード ───
+  void _toggleWalkingMode() {
+    if (_walkingMode) {
+      // 解除
+      CesiumBridge.disableWalkingMode();
+      setState(() => _walkingMode = false);
+    } else {
+      // 有効化: ユーザーが地図をクリックするまで待機
+      setState(() => _walkingMode = true);
+      final cam = CesiumBridge.getCameraState();
+      if (cam != null) {
+        // 現在地から歩行開始
+        CesiumBridge.enableWalkingMode(
+          lon: (cam['lon'] as num).toDouble(),
+          lat: (cam['lat'] as num).toDouble(),
+        );
+      }
+    }
+  }
+
   // ─── エラーメッセージのインターセプト (add:xxx) ───
   void _handleAddLayer(String typeStr) {
     final type = LayerType.values.firstWhere((t) => t.name == typeStr,
@@ -98,6 +123,49 @@ class _MapScreenState extends State<MapScreen> {
         setState(() => _annotationMode = true);
         break;
     }
+  }
+
+  /// URL から点群を読み込んでレイヤーパネルに追加（JS 高速パス）
+  Future<void> loadPointCloudFromUrl(String url, String name,
+      {int? jgdZone, bool jgdSwapped = false}) async {
+    final state = context.read<AppState>();
+    final layerId = 'pc_${DateTime.now().millisecondsSinceEpoch}';
+
+    final layer = MapLayer(
+      id: layerId,
+      name: name,
+      type: LayerType.pointCloud,
+      // URL 経由ロードは JS 側が crsHint で自動変換済み → GCP 不要
+      isProjected: false,
+    );
+    state.addLayer(layer);
+    state.setLoading(true, message: '点群を読み込み中...');
+
+    _loadPointCloudUrl(
+      url.toJS,
+      layerId.toJS,
+      jgdZone?.toJS ?? 0.toJS,
+      jgdSwapped.toJS,
+      ((JSString resultJson) {
+        final r = jsonDecode(resultJson.toDart) as Map<String, dynamic>;
+        if (!mounted) return;
+        state.setLoading(false);
+        if (r['error'] != null) {
+          state.setError('読み込みエラー: ${r['error']}');
+        } else {
+          final center = r['center'] as Map<String, dynamic>?;
+          if (center != null) {
+            CesiumBridge.flyTo(
+              lon: (center['lon'] as num).toDouble(),
+              lat: (center['lat'] as num).toDouble(),
+              height: 400,
+              pitch: -45,
+            );
+          }
+          _showSnack('$name — ${r['pts']} 点 読み込み完了');
+        }
+      }).toJS,
+    );
   }
 
   Future<void> _addPointCloudLayer(AppState state) async {
@@ -213,11 +281,15 @@ class _MapScreenState extends State<MapScreen> {
       // PDF → Canvas 変換は JS 側で実施
       final dataUrl = FileService.bytesToDataUrl(file.bytes, 'application/pdf');
 
-      // PDF ページを画像に変換
+      // PDF → Canvas 画像に変換
       final canvasDataUrl = await _renderPdfToCanvas(dataUrl);
 
+      // アスペクト比を取得（canvas から）
+      final aspectRatio = await _getPdfAspectRatio(dataUrl);
+
+      final layerId = 'pdf_${DateTime.now().millisecondsSinceEpoch}';
       final layer = MapLayer(
-        id: 'pdf_${DateTime.now().millisecondsSinceEpoch}',
+        id: layerId,
         name: file.name,
         type: LayerType.pdf,
       );
@@ -225,26 +297,34 @@ class _MapScreenState extends State<MapScreen> {
       state.addLayer(layer);
       state.setLoading(false);
 
-      if (!mounted) return;
-
-      // GCP 登録で配置
-      final pairs = await showDialog<List<GcpPair>>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => GcpDialog(layer: layer, rawPoints: const []),
-      );
-
-      if (pairs != null && pairs.length >= 4) {
-        layer.gcpPairs.addAll(pairs);
-        // PDF の4隅 → 地図上の4点
-        final corners = pairs.map((p) => p.mapPoint.toJson()).toList();
-        layer.pdfCorners.addAll(pairs.map((p) => p.mapPoint));
-        CesiumBridge.addPdfLayer(layer.id, canvasDataUrl, corners);
-        _showSnack('PDF 図面を配置しました');
+      // カメラ中心にデフォルト配置
+      final initState = CesiumBridge.initPdfPlacement(
+          layerId, canvasDataUrl, aspectRatio);
+      if (initState == null) {
+        state.setError('PDF の配置に失敗しました');
+        return;
       }
+
+      // PowerPoint 風エディタを表示
+      if (!mounted) return;
+      setState(() {
+        _editingPdfId = layerId;
+        _editingPdfState = initState;
+      });
+      _showSnack('PDF を配置しました。ドラッグで移動・拡縮・回転できます。');
     } catch (e) {
       state.setLoading(false);
       state.setError('PDF の読み込みに失敗しました: $e');
+    }
+  }
+
+  Future<double> _getPdfAspectRatio(String dataUrl) async {
+    // pdf.js で1ページ目のアスペクト比を取得
+    try {
+      final ratio = await _getPdfAspectRatioJS(dataUrl.toJS).toDart;
+      return ratio.toDartDouble;
+    } catch (_) {
+      return 1.0 / 1.414; // A4縦
     }
   }
 
@@ -281,7 +361,7 @@ class _MapScreenState extends State<MapScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message),
-      backgroundColor: const Color(0xFF1E2035),
+      backgroundColor: const Color(0xFF1B3A6B),
       behavior: SnackBarBehavior.floating,
       duration: const Duration(seconds: 3),
     ));
@@ -293,12 +373,22 @@ class _MapScreenState extends State<MapScreen> {
     final state = context.watch<AppState>();
 
     // エラーメッセージをインターセプト
-    if (state.errorMessage != null && state.errorMessage!.startsWith('add:')) {
-      final typeStr = state.errorMessage!.substring(4);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        state.setError(null);
-        _handleAddLayer(typeStr);
-      });
+    if (state.errorMessage != null) {
+      final msg = state.errorMessage!;
+      if (msg.startsWith('add:')) {
+        final typeStr = msg.substring(4);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          state.setError(null);
+          _handleAddLayer(typeStr);
+        });
+      } else if (msg.startsWith('load_sample:')) {
+        final filename = msg.substring(12);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          state.setError(null);
+          loadPointCloudFromUrl('/$filename', filename,
+              jgdZone: 6, jgdSwapped: true);
+        });
+      }
     }
 
     return Scaffold(
@@ -322,6 +412,17 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
 
+          // 歩行モードバナー
+          if (_walkingMode)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _WalkingModeBanner(
+                onExit: _toggleWalkingMode,
+              ),
+            ),
+
           // 右上: 操作ボタン
           Positioned(
             top: 16,
@@ -330,6 +431,8 @@ class _MapScreenState extends State<MapScreen> {
               state: state,
               onAnnotation: () => setState(() => _annotationMode = !_annotationMode),
               annotationActive: _annotationMode,
+              walkingActive: _walkingMode,
+              onWalking: _toggleWalkingMode,
               onShare: () => _showShareViewpoint(context, state),
               onImport: () => _showImportViewpoint(context, state),
             ),
@@ -344,6 +447,30 @@ class _MapScreenState extends State<MapScreen> {
             right: state.showLayerPanel ? 0 : -290,
             child: const LayerPanel(),
           ),
+
+          // PDF エディタオーバーレイ (PowerPoint 風)
+          if (_editingPdfId != null && _editingPdfState != null)
+            PdfEditorOverlay(
+              layerId: _editingPdfId!,
+              initialCenterLon: (_editingPdfState!['centerLon'] as num).toDouble(),
+              initialCenterLat: (_editingPdfState!['centerLat'] as num).toDouble(),
+              initialWidthM: (_editingPdfState!['widthM'] as num).toDouble(),
+              initialHeightM: (_editingPdfState!['heightM'] as num).toDouble(),
+              onConfirm: () => setState(() {
+                _editingPdfId = null;
+                _editingPdfState = null;
+                _showSnack('PDF を確定しました');
+              }),
+              onCancel: () {
+                if (_editingPdfId != null) {
+                  context.read<AppState>().removeLayer(_editingPdfId!);
+                }
+                setState(() {
+                  _editingPdfId = null;
+                  _editingPdfState = null;
+                });
+              },
+            ),
 
           // 左下: ジョイスティック
           if (_showControls)
@@ -408,8 +535,18 @@ Object _createCesiumDiv() => _createCesiumDivJS();
 external void _runLasWorker(
     JSArrayBuffer buffer, JSString filename, JSFunction callback);
 
+// URL から点群をロードして Cesium に表示 + コールバック
+@JS('_loadPointCloudFromFlutter')
+external void _loadPointCloudUrl(
+    JSString url, JSString layerId,
+    JSNumber jgdZone, JSBoolean jgdSwapped,
+    JSFunction callback);
+
 @JS('_renderPdfToCanvas')
 external JSPromise<JSString> _renderPdfToCanvasJS(JSString dataUrl);
+
+@JS('_getPdfAspectRatio')
+external JSPromise<JSNumber> _getPdfAspectRatioJS(JSString dataUrl);
 
 Future<String> _renderPdfToCanvas(String dataUrl) async {
   final result = await _renderPdfToCanvasJS(dataUrl.toJS).toDart;
@@ -430,13 +567,13 @@ class _LoadingOverlay extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: const Color(0xFF1A1A2E),
+            color: const Color(0xFF1B3A6B),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const CircularProgressIndicator(color: Color(0xFF4FC3F7)),
+              const CircularProgressIndicator(color: Colors.white),
               if (message != null) ...[
                 const SizedBox(height: 16),
                 Text(message!,
@@ -457,7 +594,7 @@ class _AnnotationModeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xCC4FC3F7),
+      color: const Color(0xEA1B3A6B),
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       child: Row(
         children: [
@@ -478,10 +615,42 @@ class _AnnotationModeBanner extends StatelessWidget {
   }
 }
 
+// 歩行モードバナー
+class _WalkingModeBanner extends StatelessWidget {
+  final VoidCallback onExit;
+  const _WalkingModeBanner({required this.onExit});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xCC2ECC71),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      child: Row(
+        children: [
+          const Icon(Icons.directions_walk, color: Colors.white, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              '歩行モード ─ 地図をタップして移動 / ジョイスティックで歩行・視点回転',
+              style: TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+          TextButton(
+            onPressed: onExit,
+            child: const Text('終了', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TopRightButtons extends StatelessWidget {
   final AppState state;
   final VoidCallback onAnnotation;
   final bool annotationActive;
+  final bool walkingActive;
+  final VoidCallback onWalking;
   final VoidCallback onShare;
   final VoidCallback onImport;
 
@@ -489,6 +658,8 @@ class _TopRightButtons extends StatelessWidget {
     required this.state,
     required this.onAnnotation,
     required this.annotationActive,
+    required this.walkingActive,
+    required this.onWalking,
     required this.onShare,
     required this.onImport,
   });
@@ -510,6 +681,14 @@ class _TopRightButtons extends StatelessWidget {
           tooltip: '注釈を追加',
           active: annotationActive,
           onTap: onAnnotation,
+        ),
+        const SizedBox(height: 8),
+        _GlassButton(
+          icon: Icons.directions_walk,
+          tooltip: '歩行モード（地図をタップして開始）',
+          active: walkingActive,
+          activeColor: const Color(0xFF2ECC71),
+          onTap: onWalking,
         ),
         const SizedBox(height: 8),
         _GlassButton(
@@ -538,6 +717,7 @@ class _GlassButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final bool active;
+  final Color? activeColor;
   final VoidCallback onTap;
 
   const _GlassButton({
@@ -545,7 +725,10 @@ class _GlassButton extends StatelessWidget {
     required this.tooltip,
     required this.onTap,
     this.active = false,
+    this.activeColor,
   });
+
+  Color get _activeColor => activeColor ?? const Color(0xFF2A5298);
 
   @override
   Widget build(BuildContext context) {
@@ -559,27 +742,26 @@ class _GlassButton extends StatelessWidget {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
+            // 通常: ソリッド紺、アクティブ: アクセントカラー
             color: active
-                ? const Color(0xFF4FC3F7).withOpacity(0.3)
-                : const Color(0x881A1A2E),
+                ? _activeColor.withOpacity(0.85)
+                : const Color(0xEA1B3A6B),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: active
-                  ? const Color(0xFF4FC3F7)
-                  : Colors.white.withOpacity(0.15),
+                  ? _activeColor
+                  : const Color(0xFF2A5298),
               width: 1,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.3),
+                color: Colors.black.withOpacity(0.35),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
             ],
           ),
-          child: Icon(icon,
-              color: active ? const Color(0xFF4FC3F7) : Colors.white70,
-              size: 20),
+          child: Icon(icon, color: Colors.white, size: 20),
         ),
       ),
     );
@@ -587,6 +769,10 @@ class _GlassButton extends StatelessWidget {
 }
 
 class _ControlsWidget extends StatelessWidget {
+  // 紺色テーマ
+  static const Color _base = Color(0xCC1B3A6B);   // 半透明紺
+  static const Color _knob = Color(0xFFFFFFFF);    // 白ノブ
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -596,15 +782,17 @@ class _ControlsWidget extends StatelessWidget {
         JoystickWidget(
           size: 110,
           label: '移動',
+          baseColor: _base,
+          knobColor: _knob,
           onMove: (dx, dy) => CesiumBridge.moveCamera(dx, dy, 0),
         ),
         const SizedBox(width: 16),
-        // 回転ジョイスティック
+        // 視点ジョイスティック
         JoystickWidget(
           size: 90,
           label: '視点',
-          baseColor: const Color(0x44FFFFFF),
-          knobColor: const Color(0xAAFFFFFF),
+          baseColor: _base,
+          knobColor: _knob,
           onMove: (dx, dy) =>
               CesiumBridge.rotateCamera(dx * 2, dy * 2),
         ),

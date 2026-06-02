@@ -82,6 +82,47 @@ external void _resetNorth();
 @JS('CesiumBridge.isInitialized')
 external JSBoolean _isInitialized();
 
+// カメラ制御 ON/OFF
+@JS('CesiumBridge.disableCameraControls')
+external void _disableCameraControls();
+
+@JS('CesiumBridge.enableCameraControls')
+external void _enableCameraControls();
+
+@JS('CesiumBridge.screenToGeo')
+external JSString? _screenToGeo(JSNumber x, JSNumber y);
+
+// PDF PowerPoint 風配置
+@JS('CesiumBridge.initPdfPlacement')
+external JSString? _initPdfPlacement(JSString id, JSString imageDataUrl, JSNumber aspectRatio);
+
+@JS('CesiumBridge.updatePdfTransform')
+external void _updatePdfTransform(
+  JSString id, JSNumber centerLon, JSNumber centerLat,
+  JSNumber widthM, JSNumber heightM, JSNumber rotDeg, JSNumber alpha);
+
+@JS('CesiumBridge.getPdfScreenHandles')
+external JSString? _getPdfScreenHandles(JSString id);
+
+@JS('CesiumBridge.enableWalkingMode')
+external void _enableWalkingMode(JSNumber lon, JSNumber lat);
+
+@JS('CesiumBridge.disableWalkingMode')
+external void _disableWalkingMode();
+
+@JS('CesiumBridge.isWalkingMode')
+external JSBoolean _isWalkingMode();
+
+// WebAR / 3D Viewer
+@JS('startPointCloudAR')
+external JSPromise<JSString> _startPointCloudAR(JSString layerId, JSString layerName);
+
+@JS('stopPointCloudAR')
+external void _stopPointCloudAR();
+
+@JS('checkARSupport')
+external JSPromise<JSString> _checkARSupport();
+
 // ─────────────────────────────────────────────
 // Dart ラッパー
 // ─────────────────────────────────────────────
@@ -184,4 +225,71 @@ class CesiumBridge {
   static void zoomIn() => _zoomIn();
   static void zoomOut() => _zoomOut();
   static void resetNorth() => _resetNorth();
+
+  static void disableCameraControls() => _disableCameraControls();
+  static void enableCameraControls()  => _enableCameraControls();
+
+  /// スクリーン座標 → 地理座標 (Cesium ray picking)
+  static Map<String, double>? screenToGeo(double x, double y) {
+    final s = _screenToGeo(x.toJS, y.toJS)?.toDart;
+    if (s == null) return null;
+    final m = jsonDecode(s) as Map<String, dynamic>;
+    return {
+      'lon': (m['lon'] as num).toDouble(),
+      'lat': (m['lat'] as num).toDouble(),
+      'h':   (m['h']   as num).toDouble(),
+    };
+  }
+
+  /// PDF を地図中心に仮配置して初期状態を返す
+  static Map<String, dynamic>? initPdfPlacement(
+      String id, String imageDataUrl, double aspectRatio) {
+    final s = _initPdfPlacement(id.toJS, imageDataUrl.toJS, aspectRatio.toJS)?.toDart;
+    if (s == null) return null;
+    return jsonDecode(s) as Map<String, dynamic>;
+  }
+
+  /// PDF の変換をリアルタイム更新
+  static void updatePdfTransform(String id, {
+    required double centerLon, required double centerLat,
+    required double widthM, required double heightM,
+    required double rotDeg, required double alpha,
+  }) {
+    _updatePdfTransform(id.toJS,
+        centerLon.toJS, centerLat.toJS,
+        widthM.toJS, heightM.toJS,
+        rotDeg.toJS, alpha.toJS);
+  }
+
+  /// PDF ハンドルのスクリーン座標を取得 (5要素: 左上,右上,右下,左下,中心)
+  static List<Map<String, double>?>? getPdfScreenHandles(String id) {
+    final s = _getPdfScreenHandles(id.toJS)?.toDart;
+    if (s == null) return null;
+    final raw = jsonDecode(s) as List;
+    return raw.map((e) {
+      if (e == null) return null;
+      return {'x': (e['x'] as num).toDouble(), 'y': (e['y'] as num).toDouble()};
+    }).toList();
+  }
+
+  static void enableWalkingMode({required double lon, required double lat}) =>
+      _enableWalkingMode(lon.toJS, lat.toJS);
+
+  static void disableWalkingMode() => _disableWalkingMode();
+
+  static bool get isWalkingMode => _isWalkingMode().toDart;
+
+  // ─── WebAR ───
+  static Future<Map<String, dynamic>> startPointCloudAR(String layerId, {String layerName = ''}) async {
+    final result = await _startPointCloudAR(layerId.toJS, layerName.toJS).toDart;
+    return jsonDecode(result.toDart) as Map<String, dynamic>;
+  }
+
+  static void stopPointCloudAR() => _stopPointCloudAR();
+
+  static Future<bool> get isARSupported async {
+    final result = await _checkARSupport().toDart;
+    final m = jsonDecode(result.toDart) as Map<String, dynamic>;
+    return m['supported'] as bool? ?? false;
+  }
 }

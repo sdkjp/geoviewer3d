@@ -73,9 +73,23 @@ class _JoystickWidgetState extends State<JoystickWidget> {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (widget.label != null)
-          Text(widget.label!,
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 10)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0xCC1B3A6B),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.3),
+                width: 0.5,
+              ),
+            ),
+            child: Text(widget.label!,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5)),
+          ),
         GestureDetector(
           onPanStart: (_) => _startRepeat(),
           onPanUpdate: _onPanUpdate,
@@ -107,35 +121,55 @@ class _JoystickPainter extends CustomPainter {
     final baseRadius = size.width / 2;
     final knobRadius = baseRadius * 0.38;
 
-    // 外輪
+    // ドロップシャドウ
+    canvas.drawCircle(
+      center + const Offset(0, 3),
+      baseRadius - 4,
+      Paint()
+        ..color = Colors.black.withOpacity(0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+    );
+
+    // 外輪（塗り）
     canvas.drawCircle(center, baseRadius - 4,
         Paint()
           ..color = baseColor
           ..style = PaintingStyle.fill);
+
+    // 外輪（ボーダー: テーマカラー薄め）
     canvas.drawCircle(center, baseRadius - 4,
         Paint()
-          ..color = Colors.white.withOpacity(0.3)
+          ..color = knobColor.withOpacity(0.35)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5);
 
-    // 方向線
+    // 十字ガイド線
     final linePaint = Paint()
-      ..color = Colors.white.withOpacity(0.2)
+      ..color = Colors.white.withOpacity(0.15)
       ..strokeWidth = 1;
-    canvas.drawLine(center + Offset(0, -baseRadius + 12),
-        center + Offset(0, baseRadius - 12), linePaint);
-    canvas.drawLine(center + Offset(-baseRadius + 12, 0),
-        center + Offset(baseRadius - 12, 0), linePaint);
+    canvas.drawLine(center + Offset(0, -baseRadius + 14),
+        center + Offset(0, baseRadius - 14), linePaint);
+    canvas.drawLine(center + Offset(-baseRadius + 14, 0),
+        center + Offset(baseRadius - 14, 0), linePaint);
 
-    // ノブ
+    // ノブ（塗り + グラデーション風）
     final knobCenter = center + knobOffset;
     canvas.drawCircle(knobCenter, knobRadius,
         Paint()
           ..color = knobColor
           ..style = PaintingStyle.fill);
+    // ノブ内部の白いハイライト
+    canvas.drawCircle(
+      knobCenter + Offset(-knobRadius * 0.2, -knobRadius * 0.2),
+      knobRadius * 0.35,
+      Paint()
+        ..color = Colors.white.withOpacity(0.35)
+        ..style = PaintingStyle.fill,
+    );
+    // ノブ外枠
     canvas.drawCircle(knobCenter, knobRadius,
         Paint()
-          ..color = Colors.white.withOpacity(0.4)
+          ..color = Colors.white.withOpacity(0.25)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5);
   }
