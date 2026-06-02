@@ -385,7 +385,7 @@ class _MapScreenState extends State<MapScreen> {
         final filename = msg.substring(12);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           state.setError(null);
-          loadPointCloudFromUrl('/$filename', filename,
+          loadPointCloudFromUrl(filename, filename,
               jgdZone: 6, jgdSwapped: true);
         });
       }
