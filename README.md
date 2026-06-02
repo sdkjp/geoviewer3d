@@ -1,17 +1,161 @@
-# geoviewer3d
+# GeoViewer 3D
 
-A new Flutter project.
+**点群・PDF図面・3Dモデルを地理院地図に重ねて表示する Web アプリ**
 
-## Getting Started
+🌐 **デモ**: https://sdkjp.github.io/geoviewer3d/
 
-This project is a starting point for a Flutter application.
+---
 
-A few resources to get you started if this is your first Flutter project:
+## 概要
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Flutter Web + Cesium.js で構築した 3D 地図ビューア。  
+橋梁・道路・建築物の点群データ（LAS/LAZ）、PDF 図面、GLB モデルを国土地理院タイルに重ねて表示し、現場確認・報告書作成・設計照合に活用できます。
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+![screenshot](https://sdkjp.github.io/geoviewer3d/icons/Icon-192.png)
+
+---
+
+## 主な機能
+
+### 🗺️ ベースマップ
+| タイル | 説明 |
+|---|---|
+| 標準 | 国土地理院 標準地図 |
+| 空中写真 | シームレス航空写真 |
+| 淡色 | 淡色地図（重ね表示向け） |
+| 白地図 | 白地図 |
+
+### 📡 点群表示（LAS / LAZ）
+- **ファイルをブラウザで直接読み込み**（サーバー送信なし）
+- Web Worker による非ブロッキング解析
+- 最大 **80 万点** 表示（チャンク描画）
+- **JGD2011 平面直角座標系** 自動検出 + WGS84 変換
+- RGB カラー点群対応（Format 2/3/5/7/8）
+- サンプルデータ付き（大阪・京橋 約 197 万点）
+
+### 📄 PDF 図面オーバーレイ
+- PDF をブラウザで Canvas に変換し地図上に貼り付け
+- **PowerPoint 風ドラッグ操作**: 移動 / 拡縮 / 回転
+- 透明度スライダー（半透明重ね合わせ）
+- Cesium ray picking による正確な座標変換
+
+### 🧊 3D モデル（GLB）
+- GLB ファイルをドロップして現在地に配置
+- カメラ視点・高度・スケール設定
+
+### 🚶 歩行モード（Street View 風）
+- 目線高さ 1.7m で地面を歩いて移動
+- ジョイスティックで移動 / 視点回転
+- 地図タップで移動地点を指定
+
+### 📐 3D / AR ビューア（点群）
+| デバイス | 動作 |
+|---|---|
+| PC / Mac | 3D オブジェクト表示（ドラッグ回転・ズーム） |
+| iPhone / iPad (iOS 16.2+) | iOS AR Quick Look でカメラ越し表示 |
+| Android (Chrome) | Google Scene Viewer / WebXR |
+
+### 📍 視点共有
+- 現在の視点（緯度・経度・高度・方位）を JSON でエクスポート
+- URL や QR コードで関係者に共有・インポート
+
+---
+
+## 操作方法
+
+### カメラ操作（俯瞰モード）
+| 操作 | 動作 |
+|---|---|
+| ドラッグ | 地図を移動 |
+| 右ドラッグ / 2本指 | 視点を回転 |
+| ホイール / ピンチ | ズームイン・アウト |
+| 左ジョイスティック | 移動 |
+| 右ジョイスティック | 視点回転 |
+
+### 歩行モード
+1. 右上の 🚶 ボタンをタップ
+2. 地図上をタップして移動開始地点を指定
+3. 左ジョイスティックで前後左右に歩行
+4. 右ジョイスティックで視点を回転
+
+---
+
+## レイヤーパネル
+右上の **≡ レイヤー** ボタンで開閉。
+
+- `+` ボタンからファイルを追加
+- 各レイヤーで **表示/非表示・透明度** を調整
+- ドラッグハンドルで**重ね順を変更**
+- 点群レイヤーには「**3D / AR ビューアで表示**」ボタン
+
+---
+
+## サンプルデータ
+
+レイヤーパネル `+` → **「サンプル: 大阪 京橋 点群」** を選択すると、  
+大阪市・京橋付近の点群（約 197 万点、RGB カラー）を自動ロードします。
+
+| 項目 | 値 |
+|---|---|
+| 形式 | LAS 1.2 Format 2 (RGB) |
+| 点数 | 1,968,912 点 |
+| 座標系 | JGD2011 平面直角 第VI系 (EPSG:6674) |
+| 中心位置 | 135.531°E, 34.691°N |
+| ファイルサイズ | 約 49 MB |
+
+---
+
+## 技術スタック
+
+| 技術 | バージョン | 用途 |
+|---|---|---|
+| Flutter Web | 3.41.x | UI フレームワーク |
+| Cesium.js | 1.126 | 3D 地球儀・地図エンジン |
+| PDF.js | 3.11 | PDF → Canvas 変換 |
+| model-viewer | 3.5 | 3D / AR ビューア |
+| Web Worker | - | 点群 LAS 解析（非同期） |
+| GitHub Actions | - | 自動ビルド・デプロイ |
+| GitHub Pages | - | ホスティング |
+
+---
+
+## ローカル開発
+
+```bash
+# 依存関係インストール
+flutter pub get
+
+# 開発サーバー起動
+flutter run -d chrome
+
+# リリースビルド
+flutter build web --release --base-href "/geoviewer3d/"
+```
+
+**必要環境**
+- Flutter 3.41.x 以上
+- Dart 3.11.x 以上
+- Chrome / Edge（開発時）
+
+---
+
+## デプロイ
+
+`main` ブランチへのプッシュで GitHub Actions が自動ビルド・デプロイします。
+
+```
+push to main
+  → flutter build web --release
+  → GitHub Pages へ自動公開
+```
+
+---
+
+## ライセンス
+
+本プロジェクトのソースコードは MIT ライセンスです。  
+サンプル点群データの著作権は各データ提供元に帰属します。
+
+---
+
+*Built with [Flutter](https://flutter.dev) + [Cesium.js](https://cesium.com)*
